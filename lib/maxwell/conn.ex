@@ -10,7 +10,7 @@ defmodule Maxwell.Conn do
   These fields contain request information:
 
      * `url` - the requested url as a binary, example: `"www.example.com:8080/path/?foo=bar"`.
-     * `method` - the request method as a atom, example: `GET`.
+     * `method` - the request method as a atom, example: :get.
      * `req_headers` - the request headers as a map, example: `%{"content-type" => "text/plain"}`.
      * `req_body` - the request body, by default is an empty string. It is set
         to nil after the request is set.

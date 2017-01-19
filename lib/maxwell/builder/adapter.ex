@@ -1,18 +1,12 @@
 defmodule Maxwell.Builder.Adapter do
-  @moduledoc """
-  Adapter macro.
-
-  ### Examples
-      # module
-      @adapter Adapter.Module
-
-  """
+  @moduledoc false
 
   @doc """
-  * `adapter` - adapter module, for example: `Maxwell.Middleware.Hackney`
+  Sets the adapter for all requests from a given module.
 
-  ### Examples
-       @adapter Adapter.Module
+  ### Example
+
+       adapter Maxwell.Adapter.Hackney
   """
   defmacro adapter(adapter) do
     quote do

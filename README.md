@@ -50,17 +50,15 @@ end
 return `{:ok, Maxwell.Conn.t}` or `{:error, term, Maxwell.Conn.t}`. The second (e.g. `get!/1`) will return
 `Maxwell.Conn.t` *only* if the request succeeds and returns a 2xx status code, otherwise it will raise `Maxwell.Error`.
 
-The same functions are also exported by the `Maxwell` module, which you can use if you do not wish to define a wrapper
-module for your API, as shown below:
+The `Maxwell` module also exposes these same functions, with some additional overloads for simple use cases, and allow
+you to use `Maxwell` to execute requests without having to define a wrapper module or build up a `Conn` struct for basic
+cases. Here's an example:
 
 ```elixir
-iex(1)> alias Maxwell.Conn
-iex(2)> Conn.new("http://httpbin.org/drip") |>
-    Conn.put_query_string(%{numbytes: 25, duration: 1, delay: 1, code: 200}) |> 
-    Maxwell.get
+iex(1)> Maxwell.get("http://httpbin.org/drip?numbytes=25&duration=1&delay=1&code=200")
 {:ok,
  %Maxwell.Conn{method: :get, opts: [], path: "/drip",
-  query_string: %{code: 200, delay: 1, duration: 1, numbytes: 25},
+  query_string: %{"code" => "200", "delay" => "1", "duration" => "1", "numbytes" => "25"},
   req_body: nil, req_headers: %{}, resp_body: '*************************',
   resp_headers: %{"access-control-allow-credentials" => "true",
     "access-control-allow-origin" => "*",
@@ -71,6 +69,8 @@ iex(2)> Conn.new("http://httpbin.org/drip") |>
     "server" => "nginx"}, state: :sent, status: 200,
   url: "http://httpbin.org"}}
 ```
+
+See the `Maxwell` module documentation for more examples and information on it's API.
 
 There are numerous helper functions for the `Maxwell.Conn` struct. See it's module docs
 for a list of all functions, and detailed info about how they behave.

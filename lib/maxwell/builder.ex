@@ -1,18 +1,19 @@
 defmodule Maxwell.Builder do
   @moduledoc """
-  Conveniences for building maxwell.
+  This module is used for generating API wrapper modules.
 
-  This module can be `use`-d into a module in order to build.
+  You inject the HTTP client behaviour into a module you've defined with
+  `use Maxwell.Builder`. This injects methods like `get/1` and `get/2` which
+  you call to execute a request of the corresponding type. In addition, the helper
+  functions from `Maxwell.Conn` are also imported (e.g. `put_req_headers/2`).
 
-  `Maxwell.Builder` also imports the `Maxwell.Conn` module, making functions like
-  `get_*`/`put_*` available.
+  You may filter the HTTP methods exposed by your module by providing a list of
+  atoms (or strings) to the `use` call, like so:
 
-  ## Options
-  When used, the following options are accepted by `Maxwell.Builder`:
+      use Maxwell.Builder, ~w(get post)a
 
-    * `~w(get)a` - only create `get/1` and `get!/1` functions,
-
-    default is `~w(get head delete trace options post put patch)a`
+  This will limit the methods exposed to just `get/1`, `get!/1`, `post/1`, and `post!/1`.
+  If no list is provided, all possible HTTP methods are made available.
 
   ## Examples
 
@@ -27,59 +28,65 @@ defmodule Maxwell.Builder do
   @method_with_body [{:post!, :post}, {:put!, :put}, {:patch!, :patch}]
 
   defmacro __using__(methods) do
-    methods = methods |> Macro.expand(__CALLER__) |> Maxwell.Builder.Util.serialize_method_to_atom(@http_methods)
-    Maxwell.Builder.Util.allow_methods?(methods, @http_methods)
+    methods = methods |> Macro.expand(__CALLER__) |> Maxwell.Builder.Util.serialize_http_methods(@http_methods)
+    Enum.each(methods, &Maxwell.Builder.Util.method_allowed?(&1, @http_methods))
 
     method_defs = for {method_exception, method} <- @method_without_body, method in methods do
       quote location: :keep do
         @doc """
-        #{unquote(method)|> to_string |> String.upcase} http method without request body.
+        Executes a #{unquote(method)|> to_string |> String.upcase} request.
+        It is not permitted to set a request body for this method.
 
-          * `conn` - `%Maxwell.Conn{}`
+        It accepts either a url as a string, or a `Maxwell.Conn.t`.
 
-        Returns `{:ok, %Maxwell.Conn{}}` or `{:error, reason_term, %Maxwell.Conn{}}`.
-
+        Returns `{:ok, Maxwell.Conn.t}` or `{:error, reason, Maxwell.Conn.t}`.
         """
+        @spec unquote(method)() :: {:ok, Maxwell.Conn.t} | {:error, term, Maxwell.Conn.t}
+        @spec unquote(method)(String.t | Maxwell.Conn.t) :: {:ok, Maxwell.Conn.t} | {:error, term, Maxwell.Conn.t}
         def unquote(method)(conn \\ %Maxwell.Conn{})
-        def unquote(method)(conn = %Maxwell.Conn{req_body: nil}) do
-          %{conn| method: unquote(method)} |> call_middleware
+
+        def unquote(method)(%Maxwell.Conn{req_body: nil} = conn) do
+          call_middleware(%{conn | method: unquote(method)})
         end
-        def unquote(method)(conn) do
+        def unquote(method)(%Maxwell.Conn{} = conn) do
           raise Maxwell.Error, {__MODULE__, "#{unquote(method)}/1 should not contain body", conn};
         end
+        def unquote(method)(url) when is_binary(url) do
+          conn = Maxwell.Conn.new(url)
+          call_middleware(%{conn | method: unquote(method)})
+        end
 
         @doc """
-        #{unquote(method_exception)|> to_string |> String.upcase} http method without request body.
+        Executes a #{unquote(method_exception)|> to_string |> String.upcase} request.
+        It is not permitted to set a request body for this method.
 
-          * `conn` - see `#{unquote(method)}/1`
+        It accepts either a url as a string, or a `Maxwell.Conn.t`.
 
-        Returns `%Maxwell.Conn{}` or raise `%MaxWell.Error{}` when status not in [200..299].
-
+        Returns `Maxwell.Conn.t` or raises `Maxwell.Error.t` when status not in [200..299].
         """
-        def unquote(method_exception)(conn \\ %Maxwell.Conn{})
-        def unquote(method_exception)(conn) do
+        @spec unquote(method_exception)() :: Maxwell.Conn.t | no_return
+        @spec unquote(method_exception)(String.t | Maxwell.Conn.t) :: Maxwell.Conn.t | no_return
+        def unquote(method_exception)(conn \\ %Maxwell.Conn{}) do
           case unquote(method)(conn) do
-            {:ok, %Maxwell.Conn{status: status} = new_conn} when status in 200..299 -> new_conn;
-            {:ok, new_conn} -> raise Maxwell.Error, {__MODULE__, :response_status_not_match, new_conn};
-            {:error, reason, new_conn} -> raise Maxwell.Error, {__MODULE__, reason, new_conn}
+            {:ok, %Maxwell.Conn{status: status} = conn} when status in 200..299 ->
+              conn
+            {:ok, conn} ->
+              raise Maxwell.Error, {__MODULE__, :response_status_not_match, conn}
+            {:error, reason, conn} ->
+              raise Maxwell.Error, {__MODULE__, reason, conn}
           end
         end
+
         @doc """
-        #{unquote(method_exception)|> to_string |> String.upcase} http method without request body.
-
-           * `conn` - see `#{unquote(method)}/1`
-           * `normal_statuses` - the specified status which not raise exception, for example: [200, 201]
-
-        Returns `%Maxwell.Conn{}` or raise `%MaxWell.Error{}`.
-
+        Same as #{unquote(method_exception)/1}, but takes a list of acceptable status codes.
         """
-        def unquote(method_exception)(conn, normal_statuses)when is_list(normal_statuses) do
+        def unquote(method_exception)(conn, normal_statuses) when is_list(normal_statuses) do
           case unquote(method)(conn) do
             {:ok, %Maxwell.Conn{status: status} = new_conn} ->
               unless status in normal_statuses do
                 raise Maxwell.Error, {__MODULE__, :response_status_not_match, conn}
               end
-              new_conn;
+              new_conn
             {:error, reason, new_conn}  ->
               raise Maxwell.Error, {__MODULE__, reason, new_conn}
           end
@@ -90,38 +97,41 @@ defmodule Maxwell.Builder do
     method_defs_with_body = for {method_exception, method} <- @method_with_body, method in methods do
       quote location: :keep do
         @doc """
-        #{unquote(method)|> to_string |> String.upcase} method.
+        Executes a #{unquote(method)|> to_string |> String.upcase} request.
 
-           * `conn` - `%Maxwell.Conn{}`.
+        This function accepts either a url as a string, or a `Maxwell.Conn.t` struct.
 
-        Returns `{:ok, %Maxwell.Conn{}}` or `{:error, reason, %Maxwell.Conn{}}`
+        Returns `{:ok, Maxwell.Conn.t}` or `{:error, reason, Maxwell.Conn.t}`
         """
+        @spec unquote(method)() :: {:ok, Maxwell.Conn.t} | {:error, term, Maxwell.Conn.t}
+        @spec unquote(method)(String.t | Maxwell.Conn.t) :: {:ok, Maxwell.Conn.t} | {:error, term, Maxwell.Conn.t}
         def unquote(method)(conn \\ %Maxwell.Conn{})
-        def unquote(method)(conn = %Maxwell.Conn{}) do
-          %{conn| method: unquote(method)} |> call_middleware
+
+        def unquote(method)(%Maxwell.Conn{} = conn) do
+          call_middleware(%{conn | method: unquote(method)})
         end
+        def unquote(method)(url) when is_binary(url) do
+          conn = Maxwell.Conn.new(url)
+          call_middleware(%{conn | method: unquote(method)})
+        end
+
         @doc """
-        #{unquote(method_exception) |> to_string |> String.upcase} http method.
+        Executes a #{unquote(method_exception) |> to_string |> String.upcase} request.
 
-           * `conn` - see `#{unquote(method)}/1`
-
-        Return `%Maxwell.Conn{}` or raise `%Maxwell.Error{}` when status not in [200.299]
+        Returns `Maxwell.Conn.t` or raises `Maxwell.Error.t` when status not in [200.299]
         """
-        def unquote(method_exception)(conn \\ %Maxwell.Conn{})
-        def unquote(method_exception)(conn) do
+        @spec unquote(method_exception)() :: Maxwell.Conn.t | no_return
+        @spec unquote(method_exception)(String.t | Maxwell.Conn.t) :: Maxwell.Conn.t | no_return
+        def unquote(method_exception)(conn \\ %Maxwell.Conn{}) do
           case unquote(method)(conn) do
             {:ok, %Maxwell.Conn{status: status} = new_conn} when status in 200..299 -> new_conn;
             {:ok, new_conn} -> raise Maxwell.Error, {__MODULE__, :response_status_not_match, new_conn}
             {:error, reason, new_conn}  -> raise Maxwell.Error, {__MODULE__, reason, new_conn}
           end
         end
+
         @doc """
-        #{unquote(method_exception) |> to_string |> String.upcase} http method.
-
-          * `conn` - see `#{unquote(method)}/1`
-          * `normal_statuses` - the specified status which not raise exception, for example: [200, 201]
-
-        Returns `%Maxwell.Conn{}` or raise `%MaxWell.Error{}`.
+        Same as #{unquote(method_exception)}/1, but takes a list of acceptable status codes.
         """
         def unquote(method_exception)(conn, normal_statuses) when is_list(normal_statuses) do
           case unquote(method)(conn) do
@@ -129,7 +139,7 @@ defmodule Maxwell.Builder do
               unless status in normal_statuses do
                 raise Maxwell.Error, {__MODULE__, :response_status_not_match, new_conn}
               end
-              new_conn;
+              new_conn
             {:error, reason, new_conn}  ->
               raise Maxwell.Error, {__MODULE__, reason, new_conn}
           end
@@ -199,7 +209,7 @@ defmodule Maxwell.Builder do
   end
 
   defp quote_adapter_call(_, _) do
-    raise ArgumentError, "Adapter must be Module"
+    raise ArgumentError, "Adapter must be a Module"
   end
 
   defmacro __before_compile__(conn) do
@@ -208,6 +218,4 @@ defmodule Maxwell.Builder do
       generate_call_middleware(conn.module),
     ]
   end
-
 end
-

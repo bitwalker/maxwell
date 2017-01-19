@@ -1,23 +1,17 @@
 defmodule Maxwell.Builder.Middleware do
-  @moduledoc"""
-  Methods for setting up middlewares.
-  """
+  @moduledoc false
 
   @doc """
-   Build middleware macro.
-
-   * `middleware` - middleware module, for example: `Maxwell.Middleware.Json`.
-   * `opts` - options setting in compile time, default is `[]`, for example: `[encode_func: &Poison.encode/1]`.
+  Adds a middleware to the pipeline for all requests executed by a module.
 
   ### Examples
-        @middleware Middleware.Module, []
 
+        middleware Maxwell.Middleware.BaseUrl, "http://httpbin.org"
+        middleware Maxwell.Middleware.Json
   """
   defmacro middleware(middleware, opts \\ []) do
     quote do
       @middleware {unquote(middleware), unquote(middleware).init(unquote(opts))}
     end
   end
-
 end
-

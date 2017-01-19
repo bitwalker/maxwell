@@ -1,64 +1,70 @@
 defmodule Maxwell.Multipart do
   @moduledoc  """
-  Process mutipart for adapter
+  This module handles processing of multipart request bodies.
   """
+
   @eof_size 2
+
+  @type headers :: [{String.t, String.t}]
+  @type part :: {:file, String.t} |
+                {:file, String.t, headers} |
+                {:file, String.t, headers, String.t} |
+                {:mp_mixed, String.t, String.t} |
+                {:mp_mixed_eof, String.t} |
+                {String.t, term()} |
+                {String.t, term(), headers} |
+                {String.t, term(), String.t, headers}
+  @type part_spec :: [part]
+
   @doc """
-  multipart form encode.
+  Constructs a `multipart/form-data` body.
 
-      * `parts` - receives lists list's member format:
+  This function accepts a list of parts to encode in the body.
 
-           1. `{:file, path}`
-           2. `{:file, path, extra_headers}`
-           3. `{:file, path, disposition, extra_headers}`
-           4. `{:mp_mixed, name, mixed_boundary}`
-           5. `{:mp_mixed_eof, mixed_boundary}`
-           6. `{name, bin_data}`
-           7. `{name, bin_data, extra_headers}`
-           8. `{name, bin_data, disposition, extra_headers}`
+  ## Files
 
-  Returns `{body_binary, size}`
+  Parts which represent files can be defined like so:
 
+      - `{:file, path}`, will upload a file from the given path
+      - `{:file, path, headers}`, will upload a file, along with additional headers
+      - `{:file, path, disposition, headers}`, same as a above, but with a custom content-disposition
+
+  For `multipart/mixed` data, use one of the following:
+
+      - `{:mp_mixed, name, mixed_boundary}`, starts a new mixed boundary
+      - `{:mp_mixed_eof, mixed_boundary}`, ends a mixed boundary
+
+  For regular form fields, use on of the following:
+
+      - `{name, value}`
+      - `{name, value, headers}`, add additional headers for this field
+      - `{name, value, disposition, headers}`, same as above, with a custom content-disposition set.
+
+  This function returns `{body :: binary(), content_length :: non_neg_integer()}`.
   """
-  def encode_form(parts), do: encode_form(new_boundary(), parts)
+  @spec encode_form(part_spec) :: {binary(), non_neg_integer()}
+  def encode_form(parts) when is_list(parts), do: encode_form(parts, new_boundary())
+
   @doc """
-  multipart form encode.
-
-     * `boundary` - multipart boundary.
-     * `parts` - receives lists list's member format:
-
-          1. `{:file, path}`
-          2. `{:file, path, extra_headers}`
-          3. `{:file, path, disposition, extra_headers}`
-          4. `{:mp_mixed, name, mixed_boundary}`
-          5. `{:mp_mixed_eof, mixed_boundary}`
-          6. `{name, bin_data}`
-          7. `{name, bin_data, extra_headers}`
-          8. `{name, bin_data, disposition, extra_headers}`
-
+  Same as `encode_form/1`, except you provide the multipart boundary.
   """
-  def encode_form(boundary, parts)when is_list(parts) do
+  def encode_form(parts, boundary) when is_list(parts) and is_binary(boundary) do
     encode_form(parts, boundary, "", 0)
   end
 
   @doc """
-  Return a random boundary(binary)
+  Return a random multipart boundary string.
 
-  ### Examples
+  ## Example
 
-        # "---------------------------mtynipxrmpegseog"
-        boundary = new_boundary()
-
+        iex> #{__MODULE__}.new_boundary()
+        "---------------------------mtynipxrmpegseog"
   """
   def new_boundary, do: "---------------------------" <> unique(16)
 
   @doc """
-  Get the size of a mp stream. Useful to calculate the content-length of a full multipart stream and send it as an identity
-
-      * `boundary` - multipart boundary
-      * `parts` - see `Maxwell.Multipart.encode_form`.
-
-  Return stream size(integer)
+  Determine the size of a multipart stream.
+  This is allows you to calculate the content-length of a full multipart stream and send it as an identity
   """
   def len_mp_stream(boundary, parts) do
     size =
